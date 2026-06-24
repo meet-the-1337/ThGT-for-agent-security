@@ -28,6 +28,7 @@ def build_agent_graph(json_path):
     for edge in data.get("edges", []):
         G.add_edge(edge["source"], edge["target"], 
                    event_id=edge["event_id"],
+                   trace_id=edge.get("trace_id", "unknown"),
                    action=edge["action"],
                    timestamp=edge["timestamp"],
                    content=edge["content"])
@@ -70,7 +71,8 @@ def extract_features(G, edges):
             "tgt_in_degree": in_degrees.get(target, 0),
             "src_pagerank": pagerank.get(source, 0),
             "tgt_pagerank": pagerank.get(target, 0),
-            "timestamp": edge["timestamp"]
+            "timestamp": edge["timestamp"],
+            "trace_id": edge.get("trace_id", "unknown")
         }
         features.append(feat)
         

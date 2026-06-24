@@ -139,7 +139,7 @@ class THGT(nn.Module):
         return logits, h_event  
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=2.0, alpha=0.95):
+    def __init__(self, gamma=2.0, alpha=0.75):  # Adjusted alpha
         super().__init__()
         self.gamma, self.alpha = gamma, alpha
 
@@ -149,20 +149,24 @@ class FocalLoss(nn.Module):
         alpha_t = torch.where(targets == 1, self.alpha, 1 - self.alpha)
         return (alpha_t * (1 - p) ** self.gamma * ce).mean()
 
-def train_one_epoch(model, event_stream, optimizer, loss_fn):
+def train_one_epoch(model, event_stream, optimizer, loss_fn, accumulation_steps=32):
     model.train()
     total_loss = 0.0
-    for batch in event_stream:               
-        optimizer.zero_grad()
+    optimizer.zero_grad()
+    
+    for i, batch in enumerate(event_stream):               
         logits, h_event = model(batch)
-        loss = loss_fn(logits, batch.label)
+        loss = loss_fn(logits, batch.label) / accumulation_steps
         loss.backward()
-        optimizer.step()
+        
+        if (i + 1) % accumulation_steps == 0 or (i + 1) == len(event_stream):
+            optimizer.step()
+            optimizer.zero_grad()
 
         model.memory_bank.update(
             batch.dst_type, batch.dst_idx, batch.edge_feat, batch.t
         )
-        total_loss += loss.item()
+        total_loss += loss.item() * accumulation_steps
     return total_loss / max(len(event_stream), 1)
 
 
@@ -273,8 +277,8 @@ def evaluate_model(model, event_stream):
 if __name__ == "__main__":
     event_stream, node_types, edge_types, num_nodes, edge_feat_dim = prepare_event_stream()
     
-    # Limit to 2500 events for quick CPU proof-of-concept run
-    event_stream = event_stream[:2500]
+    # Increase from 2500 to 10000 events for better training
+    event_stream = event_stream[:10000]
     
     print(f"\nInitializing Temporal Heterogeneous Graph Transformer (THGT) on {len(event_stream)} events...")
     model = THGT(
@@ -285,7 +289,7 @@ if __name__ == "__main__":
         edge_feat_dim=edge_feat_dim
     )
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001) # Lowered LR
     loss_fn = FocalLoss()
     
     split_idx = int(len(event_stream) * 0.8)
@@ -293,11 +297,12 @@ if __name__ == "__main__":
     test_stream = event_stream[split_idx:]
     
     print(f"Training on {len(train_stream)} events chronologically...")
-    print("Epoch 1/1...")
     
-    # Run Training
-    loss = train_one_epoch(model, train_stream, optimizer, loss_fn)
-    print(f"Training Loss: {loss:.4f}")
+    # Run Training for 2 epochs instead of 1
+    for epoch in range(2):
+        print(f"Epoch {epoch + 1}/2...")
+        loss = train_one_epoch(model, train_stream, optimizer, loss_fn)
+        print(f"Training Loss: {loss:.4f}")
     
     # Run Evaluation
     print("\nEvaluating chronologically on unseen Test Stream...")
